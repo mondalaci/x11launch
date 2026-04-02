@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "x11launch"
+version = "0.1.0"
+description = "Minimal GTK 3 launcher (query UI, tray, Ctrl+Space) — X11–oriented stack"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = []
+
+[project.scripts]
+x11launch = "x11launch.app:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["x11launch*"]
+
+[tool.setuptools.package-data]
+x11launch = ["icons/scalable/apps/x11launch-tray.svg"]
