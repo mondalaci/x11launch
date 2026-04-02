@@ -10,6 +10,9 @@ requires-python = ">=3.10"
 license = { text = "MIT" }
 dependencies = []
 
+[project.urls]
+Repository = "https://github.com/mondalaci/x11launch"
+
 [project.scripts]
 x11launch = "x11launch.app:main"
 

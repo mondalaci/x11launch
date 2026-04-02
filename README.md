@@ -11,6 +11,8 @@ Minimal GTK 3 launcher: a small query window, optional system tray entry, and a 
 
 ## Install
 
+Repository: [github.com/mondalaci/x11launch](https://github.com/mondalaci/x11launch).
+
 From the repository root:
 
 ```bash
