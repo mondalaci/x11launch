@@ -18,6 +18,7 @@ shortcut(
     + chrome("http://claude.ai/new?submit=1&q=%s")
     + ' & sleep 0.1; xdotool windowactivate "$WID"',
 )
+shortcut("<Control>a", chrome("https://www.aliexpress.com/wholesale?SearchText=%s"))
 shortcut("<Control>e", chrome("https://translate.google.com/?sl=en&tl=hu&text=%s"))
 shortcut("<Control>g", chrome("https://www.google.com/search?q=%s"))
 shortcut("<Control>h", chrome("https://translate.google.com/?sl=hu&tl=en&text=%s"))
