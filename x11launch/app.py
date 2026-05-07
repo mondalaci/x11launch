@@ -350,6 +350,15 @@ class X11launchApp(Gtk.Application):
         # Do not call Keybinder unbind/bind here. Cycling bind on every hide breaks the
         # X grab on many setups (second Ctrl+Space never reaches our callback).
 
+    def _reload_config(self) -> None:
+        try:
+            self._shortcuts = load_shortcuts()
+        except Exception as e:
+            _log.debug("reload config failed: %s", e)
+            print(f"x11launch: reload config failed: {e}", file=sys.stderr)
+            return
+        _log.debug("reload config: %d shortcuts", len(self._shortcuts))
+
     def _setup_tray(self) -> None:
         self._appind = _import_appindicator()
         if self._appind is None:
@@ -364,6 +373,9 @@ class X11launchApp(Gtk.Application):
         open_item = Gtk.MenuItem.new_with_label("Open x11launch")
         open_item.connect("activate", lambda *_: self._present_launcher())
         menu.append(open_item)
+        reload_item = Gtk.MenuItem.new_with_label("Reload config")
+        reload_item.connect("activate", lambda *_: self._reload_config())
+        menu.append(reload_item)
         quit_item = Gtk.MenuItem.new_with_label("Quit")
         quit_item.connect("activate", lambda *_: self.quit())
         menu.append(quit_item)
