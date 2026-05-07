@@ -185,7 +185,7 @@ def dispatch_shortcut_command(
     if "%s" in line:
         enc = quote(query, safe="")
         line = line.replace("%s", enc)
-    print(f"x11launch: execute: {line}", file=sys.stderr)
+    print(f"x11launch: execute: {line}")
     # start_new_session would isolate the child in a new POSIX session; Chrome’s
     # Linux singleton sometimes fails to attach to the running instance and
     # opens a second window instead of a tab.
