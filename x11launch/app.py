@@ -22,6 +22,9 @@ gi.require_version("Pango", "1.0")
 from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk, Pango
 
 from x11launch.config import (
+    BUILTIN_HISTORY_NEXT,
+    BUILTIN_HISTORY_PREV,
+    Binding,
     dispatch_shortcut_command,
     keyboard_event_matches,
     load_shortcuts,
@@ -58,6 +61,9 @@ _PARA_EMPTY_PLACEHOLDER = "\u200b"  # zero-width space
 
 # Outer margin around the shell; keep well above box-shadow reach or GTK clips the blur at the window edge.
 _CHROME_SHADOW_GUTTER_PX = 64
+
+# Cap on the in-memory query history (entries beyond this are discarded oldest-first).
+_HISTORY_MAX = 1000
 
 _WINDOW_CHROME_CSS_DONE = False
 
@@ -211,8 +217,14 @@ class X11launchApp(Gtk.Application):
         self._keybinder_inited = False
         self._keybinder_closure = None
         self._query_buffer_changed_id: int = 0
-        self._shortcuts: list[tuple[int, Gdk.ModifierType, str]] = load_shortcuts()
+        self._shortcuts: list[Binding] = load_shortcuts()
         self._x11_pre_launcher_wid: str | None = None
+        # Query history is in-memory only (lost on restart). Cursor points into
+        # _history; _history_cursor == len(_history) means "the user's draft slot"
+        # (whatever was typed before they started navigating history).
+        self._history: list[str] = []
+        self._history_cursor: int = 0
+        self._history_draft: str = ""
 
     def do_startup(self) -> None:
         # PyGObject: chain GObject vfuncs with Class.method(self), not super().
@@ -314,10 +326,12 @@ class X11launchApp(Gtk.Application):
             return
         vis_before = self._window.get_visible()
         _log.debug("_present_launcher visible_before=%s", vis_before)
-        # Before we raise the launcher, record who had focus (not the launcher).
+        # Before we raise the launcher, record who had focus (not the launcher),
+        # and reset history navigation so a fresh open starts at the draft slot.
         if not vis_before:
             self._x11_pre_launcher_wid = _xdotool_get_active_window_id()
             _log.debug("_present_launcher captured pre-launcher X11 wid=%s", self._x11_pre_launcher_wid)
+            self._reset_history_navigation()
         self._window.show_all()
         self._window.present()
         gdk_win = self._window.get_window()
@@ -561,10 +575,14 @@ class X11launchApp(Gtk.Application):
             _log.debug("query: Escape -> hide")
             self._hide_launcher()
             return True
-        for keyval, mods, command in self._shortcuts:
-            if keyboard_event_matches(event, keyval, mods):
-                _log.debug("query: user shortcut -> %r", command)
-                self._activate_user_shortcut(command)
+        for binding in self._shortcuts:
+            if keyboard_event_matches(event, binding.keyval, binding.mods):
+                _log.debug(
+                    "query: user binding -> kind=%s payload=%r",
+                    binding.kind,
+                    binding.payload,
+                )
+                self._activate_binding(binding)
                 return True
         mods = event.state & Gdk.ModifierType.MODIFIER_MASK
         if mods & Gdk.ModifierType.CONTROL_MASK and event.keyval in (
@@ -589,16 +607,70 @@ class X11launchApp(Gtk.Application):
             return True
         return False
 
-    def _activate_user_shortcut(self, command: str) -> None:
+    def _activate_binding(self, binding: Binding) -> None:
         if not self._query_view:
             return
+        if binding.kind == "builtin":
+            if binding.payload == BUILTIN_HISTORY_PREV:
+                self._history_prev()
+            elif binding.payload == BUILTIN_HISTORY_NEXT:
+                self._history_next()
+            else:
+                _log.debug("unknown builtin action %r", binding.payload)
+            return
+        # Shell command: capture history, dispatch, clear, hide.
+        query = self._query_buffer_text()
+        self._record_history(query)
         dispatch_shortcut_command(
-            command,
-            self._query_buffer_text(),
+            binding.payload,
+            query,
             pre_launcher_x11_wid=self._x11_pre_launcher_wid,
         )
         self._query_view.get_buffer().set_text("")
+        self._reset_history_navigation()
         self._hide_launcher()
+
+    def _record_history(self, text: str) -> None:
+        if not text.strip():
+            return
+        if self._history and self._history[-1] == text:
+            return
+        self._history.append(text)
+        if len(self._history) > _HISTORY_MAX:
+            del self._history[: len(self._history) - _HISTORY_MAX]
+
+    def _reset_history_navigation(self) -> None:
+        self._history_cursor = len(self._history)
+        self._history_draft = ""
+
+    def _replace_buffer(self, text: str) -> None:
+        """Replace the query buffer wholesale and place the cursor at the end."""
+        if not self._query_view:
+            return
+        buf = self._query_view.get_buffer()
+        buf.set_text(text)
+        buf.place_cursor(buf.get_end_iter())
+
+    def _history_prev(self) -> None:
+        if not self._history:
+            return
+        # Stepping back from the draft slot: snapshot the user's in-progress text.
+        if self._history_cursor >= len(self._history):
+            self._history_draft = self._query_buffer_text()
+        if self._history_cursor > 0:
+            self._history_cursor -= 1
+        self._replace_buffer(self._history[self._history_cursor])
+
+    def _history_next(self) -> None:
+        if not self._history:
+            return
+        if self._history_cursor >= len(self._history):
+            return
+        self._history_cursor += 1
+        if self._history_cursor >= len(self._history):
+            self._replace_buffer(self._history_draft)
+        else:
+            self._replace_buffer(self._history[self._history_cursor])
 
     def _submit_query(self) -> None:
         if not self._query_view:

@@ -42,6 +42,13 @@ If there is **no** official config file, x11launch loads the bundled **`x11launc
 
 In the active config file, register keys with **`shortcut(gtk_accelerator, command)`** and plain **Enter** with **`submit(command)`**. Accelerators use GTK’s native format (`gtk_accelerator_parse`), e.g. `<Control>l`, `<Alt>F4`. See the [GTK 3 docs](https://docs.gtk.org/gtk3/func.accelerator_parse.html). A **`shortcut("Return", …)`** overrides **`submit(…)`** if both are present.
 
+Two built-in launcher actions can also be bound from the config (an explicit `shortcut(...)` for the same accelerator wins):
+
+- **`historyPrev(accelerator="<Control>p")`** — replace the input field with the previous query in history.
+- **`historyNext(accelerator="<Control>n")`** — replace the input field with the next query in history (eventually restoring whatever you were typing before you started navigating).
+
+The launcher remembers every query that was sent through a shell binding (e.g. via `submit(…)` or a `shortcut(…)`), deduping consecutive duplicates. History is in-memory only and is cleared when the app exits.
+
 If **`command`** contains **`%s`**, each is replaced with the query **URL-encoded** (for `http://…?q=…`-style use). **`%w`** is replaced with the X11 window id that had focus **before** the launcher was shown (so you can **`xdotool windowactivate`** back to it; **`$(xdotool getactivewindow)`** inside the command would see the launcher instead). Without placeholders, the command runs unchanged.
 
 Example (see `x11launch/config_example.py`):

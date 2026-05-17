@@ -12,11 +12,13 @@ def open(url: str) -> str:
     return f'xdg-open "{url}"'
 
 
-# %w = X11 window that had focus before the launcher opened (not $(xdotool getactivewindow)).
+# %w = X11 window that had focus before the launcher opened.
+# Ctrl+Enter: web search, then restore focus to the pre-launcher window
+# (so the new browser tab opens in the background instead of stealing focus).
 shortcut(
     "<Control>Return",
     'WID=%w; '
-    + open("http://claude.ai/new?submit=1&q=%s")
+    + open("https://www.google.com/search?q=%s")
     + ' & sleep 0.2; xdotool windowactivate "$WID"',
 )
 shortcut("<Control>a", open("https://www.aliexpress.com/wholesale?SearchText=%s"))
@@ -27,4 +29,12 @@ shortcut("<Control>i", open("https://www.google.com/search?tbm=isch&q=%s"))
 shortcut("<Control>r", open("https://www.reddit.com/search/?q=%s"))
 shortcut("<Control>w", open("https://en.wikipedia.org/wiki/Special:Search?search=%s"))
 shortcut("<Control>y", open("https://www.youtube.com/results?search_query=%s"))
-submit(open("http://claude.ai/new?submit=1&q=%s"))
+
+# Plain Enter: default web search.
+submit(open("https://www.google.com/search?q=%s"))
+
+# Ctrl+P / Ctrl+N step backward / forward through the launcher's query history,
+# replacing the input field with the remembered query (use a different accelerator
+# string here to rebind, e.g. historyPrev("<Alt>k")).
+historyPrev("<Control>p")
+historyNext("<Control>n")

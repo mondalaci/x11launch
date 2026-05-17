@@ -7,12 +7,22 @@ Official config path: $X11LAUNCH_CONFIG if set, else
 If that file exists, it is the only config loaded. If it does not exist, the
 bundled x11launch/config_example.py is loaded instead (no merging).
 
-Call shortcut(accelerator, command) for each binding. Accelerators use GTK’s
-native format (gtk_accelerator_parse), e.g. <Control>l, <Alt>F4,
-<Primary>space. See: https://docs.gtk.org/gtk3/func.accelerator_parse.html
+Config helpers:
+  shortcut(accelerator, command)
+      Run a shell command when the accelerator is pressed.
+  submit(command)
+      Run a shell command on plain Enter (Return). Equivalent to
+      shortcut("Return", command); an explicit shortcut("Return", …) wins.
+  historyPrev(accelerator="<Control>p")
+  historyNext(accelerator="<Control>n")
+      Bind the built-in "query history previous/next" launcher actions.
+      They replace the input field with the previous / next remembered
+      query (queries are remembered each time a shell command runs).
+      An explicit shortcut(...) for the same accelerator wins.
 
-Use submit(command) for plain Enter (Return). If you also use shortcut("Return",
-…), that shortcut wins and submit() is ignored (with a stderr notice).
+Accelerators use GTK's native format (gtk_accelerator_parse), e.g.
+<Control>l, <Alt>F4, <Primary>space. See:
+https://docs.gtk.org/gtk3/func.accelerator_parse.html
 
 If command contains %s, each is replaced with the query URL-encoded
 (urllib.parse.quote with an empty safe set). Use inside http(s) query values or
@@ -30,8 +40,8 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Callable, NamedTuple
 from urllib.parse import quote
-from typing import Callable
 
 import gi
 
@@ -39,8 +49,30 @@ gi.require_version("Gdk", "3.0")
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gdk, Gtk
 
+# Built-in action identifiers used by app.py to dispatch non-shell bindings.
+BUILTIN_HISTORY_PREV = "history-prev"
+BUILTIN_HISTORY_NEXT = "history-next"
+
+
+class Binding(NamedTuple):
+    """A loaded keybinding.
+
+    kind:
+        "shell"   -> payload is a shell command (see dispatch_shortcut_command)
+        "builtin" -> payload is a BUILTIN_* identifier handled by the app
+    """
+
+    keyval: int
+    mods: Gdk.ModifierType
+    kind: str
+    payload: str
+
+
 _config_shortcuts: list[tuple[str, str]] = []
 _config_submit: list[str] = []
+# History helpers store accelerator overrides (empty list means "not registered").
+_config_history_prev: list[str] = []
+_config_history_next: list[str] = []
 
 
 def shortcut(accelerator: str, command: str) -> None:
@@ -53,9 +85,21 @@ def submit(command: str) -> None:
     _config_submit.append(command)
 
 
+def historyPrev(accelerator: str = "<Control>p") -> None:
+    """Bind the built-in 'history previous' launcher action (default <Control>p)."""
+    _config_history_prev.append(accelerator)
+
+
+def historyNext(accelerator: str = "<Control>n") -> None:
+    """Bind the built-in 'history next' launcher action (default <Control>n)."""
+    _config_history_next.append(accelerator)
+
+
 def _reset_registry() -> None:
     _config_shortcuts.clear()
     _config_submit.clear()
+    _config_history_prev.clear()
+    _config_history_next.clear()
 
 
 def spec_to_keyval_mods(accel: str) -> tuple[int, Gdk.ModifierType]:
@@ -94,7 +138,7 @@ def bundled_config_example_path() -> Path:
     return Path(__file__).resolve().parent / "config_example.py"
 
 
-def load_shortcuts() -> list[tuple[int, Gdk.ModifierType, str]]:
+def load_shortcuts() -> list[Binding]:
     """Load config from the official file if it exists, else from bundled example."""
     _reset_registry()
     official = resolve_config_path()
@@ -110,7 +154,12 @@ def load_shortcuts() -> list[tuple[int, Gdk.ModifierType, str]]:
             )
             return []
 
-    ns: dict[str, Callable[..., None]] = {"shortcut": shortcut, "submit": submit}
+    ns: dict[str, Callable[..., None]] = {
+        "historyNext": historyNext,
+        "historyPrev": historyPrev,
+        "shortcut": shortcut,
+        "submit": submit,
+    }
     try:
         src = path.read_text(encoding="utf-8")
         exec(compile(src, str(path), "exec"), ns, ns)
@@ -121,7 +170,7 @@ def load_shortcuts() -> list[tuple[int, Gdk.ModifierType, str]]:
         print(f"x11launch: error loading config {path}: {e}", file=sys.stderr)
         return []
 
-    out: list[tuple[int, Gdk.ModifierType, str]] = []
+    out: list[Binding] = []
     seen: set[tuple[int, int]] = set()
     for accel, cmd in list(_config_shortcuts):
         try:
@@ -140,29 +189,62 @@ def load_shortcuts() -> list[tuple[int, Gdk.ModifierType, str]]:
             )
             continue
         seen.add(dup_key)
-        out.append((kv, md, cmd.strip()))
+        out.append(Binding(kv, md, "shell", cmd.strip()))
 
+    # submit(command): a shell command on the fixed accelerator "Return".
     if _config_submit:
         if len(_config_submit) > 1:
             print(
                 "x11launch: submit() called multiple times; using the last command",
                 file=sys.stderr,
             )
-        sub = _config_submit[-1].strip()
+        sub_cmd = _config_submit[-1].strip()
         try:
-            r_kv, r_md = spec_to_keyval_mods("Return")
+            kv, md = spec_to_keyval_mods("Return")
         except Exception as e:
             print(f"x11launch: could not register submit (Return): {e}", file=sys.stderr)
-            return out
-        r_key = (r_kv, int(r_md))
-        if r_key in seen:
+        else:
+            key = (kv, int(md))
+            if key in seen:
+                print(
+                    'x11launch: submit() ignored because shortcut("Return", …) is already defined',
+                    file=sys.stderr,
+                )
+            else:
+                seen.add(key)
+                out.append(Binding(kv, md, "shell", sub_cmd))
+
+    # historyPrev()/historyNext(): built-in launcher actions; argument overrides the accelerator.
+    for helper_name, accels, default_accel, action_id in (
+        ("historyPrev", _config_history_prev, "<Control>p", BUILTIN_HISTORY_PREV),
+        ("historyNext", _config_history_next, "<Control>n", BUILTIN_HISTORY_NEXT),
+    ):
+        if not accels:
+            continue
+        if len(accels) > 1:
             print(
-                'x11launch: submit() ignored because shortcut("Return", …) is already defined',
+                f"x11launch: {helper_name}() called multiple times; using the last accelerator",
                 file=sys.stderr,
             )
-        else:
-            seen.add(r_key)
-            out.append((r_kv, r_md, sub))
+        accel = accels[-1].strip() or default_accel
+        try:
+            kv, md = spec_to_keyval_mods(accel)
+        except Exception as e:
+            print(
+                f"x11launch: could not register {helper_name} ({accel}): {e}",
+                file=sys.stderr,
+            )
+            continue
+        key = (kv, int(md))
+        if key in seen:
+            print(
+                f"x11launch: {helper_name}() ignored because shortcut({accel!r}, …) "
+                "is already defined",
+                file=sys.stderr,
+            )
+            continue
+        seen.add(key)
+        out.append(Binding(kv, md, "builtin", action_id))
 
     resolved = path.resolve()
     if use_user:
