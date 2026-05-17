@@ -12,14 +12,14 @@ def open(url: str) -> str:
     return f'xdg-open "{url}"'
 
 
+CLAUDE = open("https://claude.ai/new?q=%s&submit=1")
+
 # %w = X11 window that had focus before the launcher opened.
-# Ctrl+Enter: web search, then restore focus to the pre-launcher window
+# Ctrl+Enter: ask Claude, then restore focus to the pre-launcher window
 # (so the new browser tab opens in the background instead of stealing focus).
 shortcut(
     "<Control>Return",
-    'WID=%w; '
-    + open("https://www.google.com/search?q=%s")
-    + ' & sleep 0.2; xdotool windowactivate "$WID"',
+    'WID=%w; ' + CLAUDE + ' & sleep 0.2; xdotool windowactivate "$WID"',
 )
 shortcut("<Control>a", open("https://www.aliexpress.com/wholesale?SearchText=%s"))
 shortcut("<Control>e", open("https://translate.google.com/?sl=en&tl=hu&text=%s"))
@@ -30,8 +30,8 @@ shortcut("<Control>r", open("https://www.reddit.com/search/?q=%s"))
 shortcut("<Control>w", open("https://en.wikipedia.org/wiki/Special:Search?search=%s"))
 shortcut("<Control>y", open("https://www.youtube.com/results?search_query=%s"))
 
-# Plain Enter: default web search.
-submit(open("https://www.google.com/search?q=%s"))
+# Plain Enter: ask Claude (URL is auto-submitted by claude-autosubmit.userscript.js).
+submit(CLAUDE)
 
 # Ctrl+P / Ctrl+N step backward / forward through the launcher's query history,
 # replacing the input field with the remembered query (use a different accelerator
