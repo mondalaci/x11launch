@@ -4,10 +4,13 @@ GTK 3 + PyGObject launcher: query field, tray icon, global Ctrl+Space (Keybinder
 
 from __future__ import annotations
 
+import fcntl
 import logging
 import os
+import signal
 import subprocess
 import sys
+import time
 import warnings
 from pathlib import Path
 
@@ -66,6 +69,9 @@ _CHROME_SHADOW_GUTTER_PX = 64
 _HISTORY_MAX = 1000
 
 _WINDOW_CHROME_CSS_DONE = False
+
+# Held for the lifetime of the process; closing this fd releases the singleton flock.
+_SINGLETON_LOCK_FD: int | None = None
 
 _log = logging.getLogger("x11launch")
 
@@ -151,6 +157,87 @@ def _xdotool_get_active_window_id() -> str | None:
     except Exception as e:
         _log.debug("xdotool getactivewindow: %s", e)
     return None
+
+
+def _singleton_lock_path() -> Path:
+    """Per-user lockfile path; XDG_RUNTIME_DIR is auto-cleaned on logout."""
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "").strip()
+    base = Path(runtime_dir) if runtime_dir else Path("/tmp")
+    return base / f"x11launch-{os.getuid()}.lock"
+
+
+def _acquire_singleton_lock_or_takeover(timeout_s: float = 3.0) -> int | None:
+    """Hold an exclusive flock for the lifetime of this process; replace any stale prior instance.
+
+    pm2 update can leave the old child running while it spawns a new one (and GApplication's
+    D-Bus singleton is a no-op without DBUS_SESSION_BUS_ADDRESS, which pm2 daemons typically
+    lack), so we SIGTERM (then SIGKILL) the prior pid recorded in the lockfile and re-try.
+
+    Returns the held fd; the caller must keep the reference alive (kernel releases the lock on
+    fd close / process exit). Raises SystemExit if the prior instance cannot be displaced.
+    Returns None only if the lockfile location itself is unusable (rare; we then proceed
+    without singleton enforcement rather than refusing to start).
+    """
+    path = _singleton_lock_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(path), os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError as e:
+        _log.debug("singleton: cannot open %s: %s", path, e)
+        return None
+
+    def _try_take() -> bool:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        os.ftruncate(fd, 0)
+        os.write(fd, f"{os.getpid()}\n".encode())
+        _log.debug("singleton: acquired %s pid=%d", path, os.getpid())
+        return True
+
+    if _try_take():
+        return fd
+
+    deadline = time.monotonic() + timeout_s
+    sigkill_after = time.monotonic() + max(timeout_s - 1.0, 0.5)
+    last_signaled_pid: int = 0
+    while time.monotonic() < deadline:
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            data = os.read(fd, 64).decode("utf-8", "ignore").strip()
+            old_pid = int(data) if data.isdigit() else 0
+        except (OSError, ValueError):
+            old_pid = 0
+
+        if old_pid > 0 and old_pid != os.getpid():
+            sig = signal.SIGKILL if time.monotonic() >= sigkill_after else signal.SIGTERM
+            try:
+                os.kill(old_pid, sig)
+                if old_pid != last_signaled_pid or sig == signal.SIGKILL:
+                    _log.debug(
+                        "singleton: sent %s to prior pid=%d",
+                        signal.Signals(sig).name,
+                        old_pid,
+                    )
+                    last_signaled_pid = old_pid
+            except ProcessLookupError:
+                pass
+            except PermissionError as e:
+                os.close(fd)
+                raise SystemExit(
+                    f"x11launch: prior instance pid={old_pid} owned by another user; "
+                    f"cannot take over ({e})."
+                )
+
+        time.sleep(0.15)
+        if _try_take():
+            return fd
+
+    os.close(fd)
+    raise SystemExit(
+        "x11launch: timed out waiting for prior instance to release the singleton lock."
+    )
 
 
 def _import_appindicator():
@@ -688,6 +775,7 @@ class X11launchApp(Gtk.Application):
 
 
 def main(argv: list[str] | None = None) -> int:
+    global _SINGLETON_LOCK_FD
     configure_logging()
     if debug_enabled():
         _log.debug(
@@ -696,6 +784,7 @@ def main(argv: list[str] | None = None) -> int:
             argv if argv is not None else sys.argv,
         )
     warnings.filterwarnings("ignore", category=DeprecationWarning, module="gi")
+    _SINGLETON_LOCK_FD = _acquire_singleton_lock_or_takeover()
     if argv is None:
         argv = sys.argv
     app = X11launchApp()
