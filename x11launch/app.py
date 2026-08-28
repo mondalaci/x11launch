@@ -312,6 +312,8 @@ class X11launchApp(Gtk.Application):
         self._history: list[str] = []
         self._history_cursor: int = 0
         self._history_draft: str = ""
+        # Swallow the Ctrl+Space keypress that follows a global hotkey open.
+        self._suppress_ctrl_space_hide: bool = False
 
     def do_startup(self) -> None:
         # PyGObject: chain GObject vfuncs with Class.method(self), not super().
@@ -344,7 +346,11 @@ class X11launchApp(Gtk.Application):
                 keystring,
                 id(app),
             )
-            GLib.idle_add(app._present_launcher_idle)
+            if app._window is not None and app._window.get_visible():
+                GLib.idle_add(app._hide_launcher_idle)
+            else:
+                app._suppress_ctrl_space_hide = True
+                GLib.idle_add(app._present_launcher_from_hotkey_idle)
 
         self._keybinder_closure = on_hotkey
 
@@ -402,12 +408,33 @@ class X11launchApp(Gtk.Application):
         else:
             _log.debug("active hotkey accel=%r", self._hotkey_accel)
 
-    def _present_launcher_idle(self) -> bool:
-        _log.debug("_present_launcher_idle (from GLib idle)")
-        self._present_launcher()
+    def _present_launcher_from_hotkey_idle(self) -> bool:
+        _log.debug("_present_launcher_from_hotkey_idle (from GLib idle)")
+        self._present_launcher(from_hotkey=True)
         return GLib.SOURCE_REMOVE
 
-    def _present_launcher(self) -> None:
+    def _hide_launcher_idle(self) -> bool:
+        _log.debug("_hide_launcher_idle (from GLib idle)")
+        self._hide_launcher()
+        return GLib.SOURCE_REMOVE
+
+    def _focus_query_view_idle(self) -> bool:
+        if self._window and self._window.get_visible() and self._query_view:
+            self._query_view.grab_focus()
+        GLib.timeout_add(250, self._clear_suppress_ctrl_space_idle)
+        return GLib.SOURCE_REMOVE
+
+    def _clear_suppress_ctrl_space_idle(self) -> bool:
+        self._suppress_ctrl_space_hide = False
+        return GLib.SOURCE_REMOVE
+
+    def _finalize_launcher_present_idle(self) -> bool:
+        if self._window and self._window.get_visible():
+            self._reset_launcher_geometry()
+            self._center_window_on_screen()
+        return GLib.SOURCE_REMOVE
+
+    def _present_launcher(self, *, from_hotkey: bool = False) -> None:
         if not self._window or not self._query_view:
             _log.debug("_present_launcher bail: no window/query view")
             return
@@ -419,13 +446,21 @@ class X11launchApp(Gtk.Application):
             self._x11_pre_launcher_wid = _xdotool_get_active_window_id()
             _log.debug("_present_launcher captured pre-launcher X11 wid=%s", self._x11_pre_launcher_wid)
             self._reset_history_navigation()
+            if self._window.get_realized():
+                self._reset_launcher_geometry()
         self._window.show_all()
         self._window.present()
+        if not vis_before:
+            GLib.idle_add(self._finalize_launcher_present_idle)
         gdk_win = self._window.get_window()
         if gdk_win is not None:
             gdk_win.raise_()
             gdk_win.focus(Gdk.CURRENT_TIME)
-        self._query_view.grab_focus()
+        if from_hotkey:
+            # Defer focus so the hotkey keypress is not delivered to the query field.
+            GLib.timeout_add(150, self._focus_query_view_idle)
+        else:
+            self._query_view.grab_focus()
         _log.debug(
             "_present_launcher after present visible=%s grab_widget=%s",
             self._window.get_visible(),
@@ -509,7 +544,7 @@ class X11launchApp(Gtk.Application):
         win.set_resizable(True)
         win.set_decorated(False)
         win.set_skip_taskbar_hint(True)
-        win.set_position(Gtk.WindowPosition.CENTER)
+        win.set_position(Gtk.WindowPosition.CENTER_ALWAYS)
         screen = Gdk.Screen.get_default()
         rgba = screen.get_rgba_visual() if screen is not None else None
         if rgba is not None:
@@ -578,10 +613,6 @@ class X11launchApp(Gtk.Application):
         tv = self._query_view
         if tv is None or not tv.get_realized():
             return
-        w = tv.get_allocated_width()
-        if w < 2:
-            return
-        _min_h, nat_h = tv.get_preferred_height_for_width(w)
         buf = tv.get_buffer()
         _y, line_h = tv.get_line_yrange(buf.get_start_iter())
         if line_h <= 0:
@@ -591,14 +622,64 @@ class X11launchApp(Gtk.Application):
         text = buf.get_text(start, end, False)
         if not text:
             content_h = floor_h
-        elif "\n" in text:
-            content_h = max(floor_h, nat_h)
         else:
-            # Single logical line: expand only when word-wrap needs more than one display line.
-            content_h = nat_h if nat_h > floor_h else floor_h
+            w = tv.get_allocated_width()
+            if w < 2:
+                return
+            _min_h, nat_h = tv.get_preferred_height_for_width(w)
+            if "\n" in text:
+                content_h = max(floor_h, nat_h)
+            else:
+                # Single logical line: expand only when word-wrap needs more than one display line.
+                content_h = nat_h if nat_h > floor_h else floor_h
         _wr, cur_h = tv.get_size_request()
         if cur_h != content_h:
             tv.set_size_request(-1, content_h)
+
+    def _reset_launcher_geometry(self) -> None:
+        """Resize the query field and window frame to match the current buffer."""
+        self._sync_query_view_height()
+        win = self._window
+        if win is None:
+            return
+        _min_w, nat_w = win.get_preferred_width()
+        _min_h, nat_h = win.get_preferred_height()
+        width = max(_QUERY_WINDOW_WIDTH, nat_w)
+        if width > 0 and nat_h > 0:
+            win.resize(width, nat_h)
+
+    def _center_window_on_screen(self) -> None:
+        """Vertically and horizontally center the launcher on the monitor under the pointer."""
+        win = self._window
+        if win is None:
+            return
+        display = Gdk.Display.get_default()
+        if display is None:
+            return
+        monitor = None
+        seat = display.get_default_seat()
+        if seat is not None:
+            pointer = seat.get_pointer()
+            if pointer is not None:
+                _, px, py, _ = pointer.get_position()
+                monitor = display.get_monitor_at_point(px, py)
+        if monitor is None:
+            monitor = display.get_primary_monitor()
+        if monitor is None:
+            return
+        geom = display.get_monitor_geometry(monitor)
+        win_w, win_h = win.get_size()
+        if win_w <= 1 or win_h <= 1:
+            alloc = win.get_allocation()
+            win_w, win_h = alloc.width, alloc.height
+        if win_w <= 1 or win_h <= 1:
+            _min_w, win_w = win.get_preferred_width()
+            _min_h, win_h = win.get_preferred_height()
+        if win_w <= 1 or win_h <= 1:
+            win_w, win_h = win.get_default_size()
+        x = geom.x + max(0, (geom.width - win_w) // 2)
+        y = geom.y + max(0, (geom.height - win_h) // 2)
+        win.move(x, y)
 
     def _sync_paragraph_gap_tag(self) -> None:
         """Gap between paragraphs: above_lines on text after each \\n; for an empty last line, below_lines on the char before the final \\n."""
@@ -676,6 +757,10 @@ class X11launchApp(Gtk.Application):
             Gdk.KEY_space,
             Gdk.KEY_KP_Space,
         ):
+            if self._suppress_ctrl_space_hide:
+                _log.debug("query: Ctrl+Space suppressed (hotkey echo)")
+                self._suppress_ctrl_space_hide = False
+                return True
             _log.debug("query: Ctrl+Space -> hide")
             self._hide_launcher()
             return True
@@ -714,6 +799,7 @@ class X11launchApp(Gtk.Application):
             pre_launcher_x11_wid=self._x11_pre_launcher_wid,
         )
         self._query_view.get_buffer().set_text("")
+        self._reset_launcher_geometry()
         self._reset_history_navigation()
         self._hide_launcher()
 
@@ -766,6 +852,7 @@ class X11launchApp(Gtk.Application):
             "query: Enter submit fallback (define submit(...) or shortcut(\"Return\", ...) in config)"
         )
         self._query_view.get_buffer().set_text("")
+        self._reset_launcher_geometry()
         self._hide_launcher()
 
     def do_shutdown(self) -> None:
