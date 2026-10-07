@@ -54,7 +54,7 @@ If **`command`** contains **`%s`**, each is replaced with the query **URL-encode
 Example (see `x11launch/config_example.py`):
 
 ```python
-shortcut("<Control>g", 'google-chrome "https://www.google.com/search?q=%s"')
+shortcut("<Alt>g", 'google-chrome "https://www.google.com/search?q=%s"')
 ```
 
 Put **`%s`** only where URL-encoding the typed text is right (usually inside `http://…?…=%s`). A bare **`xdg-open %s`** with a full pasted URL will break, because **`https://`** becomes percent-encoded. The bundled **`submit`** example shows a safe pattern.

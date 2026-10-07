@@ -21,14 +21,14 @@ shortcut(
     "<Control>Return",
     'WID=%w; ' + CLAUDE + ' & sleep 0.2; xdotool windowactivate "$WID"',
 )
-shortcut("<Control>a", open("https://www.aliexpress.com/wholesale?SearchText=%s"))
-shortcut("<Control>e", open("https://translate.google.com/?sl=en&tl=hu&text=%s"))
-shortcut("<Control>g", open("https://www.google.com/search?q=%s"))
-shortcut("<Control>h", open("https://translate.google.com/?sl=hu&tl=en&text=%s"))
-shortcut("<Control>i", open("https://www.google.com/search?tbm=isch&q=%s"))
-shortcut("<Control>r", open("https://www.reddit.com/search/?q=%s"))
-shortcut("<Control>w", open("https://en.wikipedia.org/wiki/Special:Search?search=%s"))
-shortcut("<Control>y", open("https://www.youtube.com/results?search_query=%s"))
+shortcut("<Alt>a", open("https://www.aliexpress.com/wholesale?SearchText=%s"))
+shortcut("<Alt>e", open("https://translate.google.com/?sl=en&tl=hu&text=%s"))
+shortcut("<Alt>g", open("https://www.google.com/search?q=%s"))
+shortcut("<Alt>h", open("https://translate.google.com/?sl=hu&tl=en&text=%s"))
+shortcut("<Alt>i", open("https://www.google.com/search?tbm=isch&q=%s"))
+shortcut("<Alt>r", open("https://www.reddit.com/search/?q=%s"))
+shortcut("<Alt>w", open("https://en.wikipedia.org/wiki/Special:Search?search=%s"))
+shortcut("<Alt>y", open("https://www.youtube.com/results?search_query=%s"))
 
 # Plain Enter: ask Claude (URL is auto-submitted by claude-autosubmit.userscript.js).
 submit(CLAUDE)
