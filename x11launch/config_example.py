@@ -12,7 +12,7 @@ def open(url: str) -> str:
     return f'xdg-open "{url}"'
 
 
-CLAUDE = open("https://claude.ai/new?q=%s&submit=1")
+CLAUDE = open("http://chat.localhost?query=%s&agent=user&submit=1")
 
 # %w = X11 window that had focus before the launcher opened.
 # Ctrl+Enter: ask Claude, then restore focus to the pre-launcher window
@@ -22,11 +22,10 @@ shortcut(
     'WID=%w; ' + CLAUDE + ' & sleep 0.2; xdotool windowactivate "$WID"',
 )
 shortcut("<Alt>a", open("https://www.aliexpress.com/wholesale?SearchText=%s"))
-shortcut("<Alt>e", open("https://translate.google.com/?sl=en&tl=hu&text=%s"))
 shortcut("<Alt>g", open("https://www.google.com/search?q=%s"))
-shortcut("<Alt>h", open("https://translate.google.com/?sl=hu&tl=en&text=%s"))
 shortcut("<Alt>i", open("https://www.google.com/search?tbm=isch&q=%s"))
 shortcut("<Alt>r", open("https://www.reddit.com/search/?q=%s"))
+shortcut("<Alt>t", open("http://chat.localhost?query=%s&agent=vocab&submit=1"))
 shortcut("<Alt>w", open("https://en.wikipedia.org/wiki/Special:Search?search=%s"))
 shortcut("<Alt>y", open("https://www.youtube.com/results?search_query=%s"))
 
